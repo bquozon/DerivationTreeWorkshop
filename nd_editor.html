@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Natural Deduction Editor</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'STIX Two Text', 'CMU Serif', Georgia, serif;
+  background: #f2f2ec; min-height: 100vh;
+}
+
+/* ── TOOLBAR ── */
+#toolbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 46px;
+  background: #1b2a40;
+  display: flex; align-items: center; padding: 0 18px; gap: 8px;
+  z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,.4);
+}
+#toolbar .logo {
+  font-size: .88em; font-weight: 700; color: #e2e8f4;
+  letter-spacing: .05em; margin-right: 10px; white-space: nowrap; user-select: none;
+}
+.tbtn {
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22);
+  color: #dce4f2; padding: 4px 13px; border-radius: 4px; cursor: pointer;
+  font-size: .76em; transition: background .15s; white-space: nowrap; font-family: sans-serif;
+}
+.tbtn:hover { background: rgba(255,255,255,.2); }
+#toolbar .spacer { flex: 1; }
+#toolbar .sep { width: 1px; height: 22px; background: rgba(255,255,255,.14); margin: 0 4px; }
+
+/* ── WORKSPACE ── */
+#workspace {
+  margin-top: 46px; padding: 50px 52px 90px;
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 56px; overflow-x: auto; min-height: calc(100vh - 46px);
+}
+
+/* ── TREE CARD ── */
+.tree-card {
+  background: #fff; border: 1px solid #ddddd2; border-radius: 8px;
+  padding: 12px 24px 32px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  display: inline-flex; flex-direction: column; align-items: center;
+  position: relative; overflow-x: auto;
+}
+.tree-card-header {
+  align-self: stretch; display: flex; align-items: center;
+  justify-content: space-between; gap: 8px; margin-bottom: 24px;
+  border-bottom: 1px solid #f0f0e8; padding-bottom: 8px;
+}
+.tree-title-input {
+  font-family: sans-serif; font-size: .75em; color: #999;
+  border: none; outline: none; background: transparent; min-width: 60px; flex: 1;
+}
+.tree-title-input:focus { color: #333; }
+.tree-title-input::placeholder { color: #ccc; font-style: italic; }
+.tree-del-btn {
+  background: none; border: none; color: #ccc; font-size: .82em; cursor: pointer;
+  padding: 2px 8px; border-radius: 3px; font-family: sans-serif; white-space: nowrap; flex-shrink: 0;
+}
+.tree-del-btn:hover { color: #e74c3c; background: #fff0ee; }
+
+/* ── ND NODE ──
+   Anatomy (top → bottom):
+     [ slot-btn ]  [ slot-btn ]   ← for fixed arity: one btn per empty slot, side-by-side
+     [ premise1 ]  [ premise2 ]  ← filled premises (side-by-side)
+     [──────────────────](Rule)  ← bar stretches full width
+     [     conclusion   ]        ← centered
+*/
+.nd-node {
+  display: inline-flex; flex-direction: column;
+  align-items: stretch;
+  /* Extra right margin gives the hover-delete button room without leaving the hover zone */
+  padding-right: 22px;
+  position: relative;
+}
+
+.nd-top { display: flex; flex-direction: column; align-items: stretch; }
+
+/* Premises row: houses BOTH filled nodes and empty slot buttons side-by-side */
+.nd-premises-row {
+  display: flex; flex-direction: row;
+  align-items: flex-end; justify-content: center;
+  gap: 20px;
+}
+
+/* Empty slot: a placeholder column that puts the add-btn at the bottom,
+   matching the bottom-alignment of sibling premise nodes */
+.nd-empty-slot {
+  display: inline-flex; flex-direction: column;
+  align-items: center; justify-content: flex-end;
+  min-height: 36px;
+}
+
+/* Free-arity: single "+" row above the premises row */
+.nd-free-add-row { display: flex; justify-content: center; padding-bottom: 4px; }
+
+/* Inference section: bar + conclusion */
+.nd-inference { display: flex; flex-direction: column; }
+.nd-bar-row { display: flex; align-items: center; }
+.nd-bar { flex: 1; border-top: 1.5px solid #111; min-width: 32px; }
+
+.nd-rule-wrap {
+  margin-left: 5px; white-space: nowrap; cursor: pointer;
+  padding: 1px 5px; border-radius: 3px; font-size: .80em; line-height: 1.5;
+  display: inline-flex; align-items: center; gap: 1px;
+}
+.nd-rule-wrap:hover { background: #e6f0fb; }
+.nd-rule-ph { color: #bfc8d8; font-family: sans-serif; font-size: .74em; font-style: italic; }
+
+.nd-concl-wrap {
+  text-align: center; cursor: pointer;
+  padding: 4px 10px 3px; border-radius: 3px; white-space: nowrap;
+}
+.nd-concl-wrap:hover { background: #e6f0fb; }
+.nd-concl-ph { color: #bfc8d8; font-family: sans-serif; font-size: .76em; font-style: italic; }
+
+/* Add-premise button (used both in free-add-row and inside empty slots) */
+.add-prem-btn {
+  background: none; border: 1.5px dashed #c4cfde; color: #8898b0;
+  border-radius: 4px; padding: 2px 10px; cursor: pointer;
+  font-size: .66em; line-height: 1.7; white-space: nowrap;
+  transition: all .14s; font-family: sans-serif;
+}
+.add-prem-btn:hover { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
+
+/* ── DELETE BUTTON ──
+   Sits inside the node's padding-right zone (right: 0 → right: 22px of the box).
+   Visibility is toggled by JS with a grace-period timer, so moving the mouse
+   from the node onto the button doesn't make it vanish.
+*/
+.nd-node-del {
+  display: none;                /* JS toggles this */
+  position: absolute;
+  top: 2px; right: 2px;        /* within the padding-right zone */
+  background: none; border: none; color: #c8d4e0;
+  font-size: .82em; cursor: pointer;
+  padding: 1px 4px; border-radius: 3px; line-height: 1.3;
+}
+.nd-node-del:hover { color: #e74c3c !important; background: #fff0ee; }
+
+/* ── MODALS shared ── */
+.modal-bg {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.42); z-index: 2000;
+  align-items: center; justify-content: center;
+}
+.modal-bg.open { display: flex; }
+.modal-box {
+  background: #fff; border-radius: 10px; padding: 26px;
+  width: 510px; max-width: 94vw; box-shadow: 0 18px 52px rgba(0,0,0,.22);
+}
+.modal-box h3 { font-family: sans-serif; font-size: .88em; color: #1b2a40; margin-bottom: 14px; font-weight: 600; }
+.modal-label { font-family: sans-serif; font-size: .72em; color: #6b7a90; margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.modal-input {
+  width: 100%; font-family: 'Courier New', monospace;
+  font-size: .9em; padding: 8px 10px;
+  border: 1.5px solid #c8d4e4; border-radius: 5px; outline: none; color: #111;
+}
+.modal-input:focus { border-color: #3b82f6; }
+.modal-hint { font-size: .7em; color: #a0aab8; margin: 5px 0 11px; font-family: sans-serif; }
+.modal-preview {
+  background: #f7f8fa; border: 1px solid #e2e8f0; border-radius: 5px;
+  padding: 12px 18px; min-height: 42px; text-align: center;
+  margin-bottom: 16px; overflow-x: auto;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn-primary {
+  background: #2563eb; border: none; color: #fff;
+  padding: 6px 18px; border-radius: 5px; cursor: pointer; font-size: .84em; font-family: sans-serif;
+}
+.btn-primary:hover { background: #1d4ed8; }
+.btn-secondary {
+  background: #f1f5f9; border: 1px solid #c8d4e4; color: #475569;
+  padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: .84em; font-family: sans-serif;
+}
+.btn-secondary:hover { background: #e2e8f0; }
+
+/* ── ARITY PICKER ── */
+.arity-section {
+  margin-bottom: 16px; background: #f7f8fa; border: 1px solid #e2e8f0;
+  border-radius: 6px; padding: 10px 12px;
+}
+.arity-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.arity-label { font-family: sans-serif; font-size: .72em; color: #6b7a90; font-weight: 600; white-space: nowrap; }
+.arity-btn {
+  background: #fff; border: 1.5px solid #c8d4e4; color: #5a6a7e;
+  padding: 3px 10px; border-radius: 5px; cursor: pointer;
+  font-size: .75em; font-family: sans-serif; transition: all .12s;
+}
+.arity-btn:hover { border-color: #3b82f6; color: #2563eb; }
+.arity-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
+.arity-inferred { font-size: .68em; color: #a0aab8; font-family: sans-serif; font-style: italic; }
+
+/* ── EXPORT MODAL ── */
+.export-box {
+  background: #fff; border-radius: 10px; padding: 26px;
+  width: 660px; max-width: 94vw; box-shadow: 0 18px 52px rgba(0,0,0,.22);
+}
+.export-box h3 { font-family: sans-serif; font-size: .88em; color: #1b2a40; margin-bottom: 14px; font-weight: 600; }
+.export-ta {
+  width: 100%; height: 260px; font-family: 'Courier New', monospace;
+  font-size: .78em; padding: 10px; border: 1.5px solid #c8d4e4;
+  border-radius: 5px; resize: vertical; background: #f8fafc; color: #222;
+}
+
+/* ── HELP BAR ── */
+#help-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: #eeeee8; border-top: 1px solid #ddddd4;
+  padding: 5px 18px; font-size: .69em; color: #aaa;
+  font-family: sans-serif; z-index: 500; display: flex; gap: 22px; flex-wrap: wrap;
+}
+#help-bar b { color: #666; }
+</style>
+</head>
+<body>
+
+<!-- ── TOOLBAR ── -->
+<div id="toolbar">
+  <div class="logo">⊢ ND Editor</div>
+  <div class="sep"></div>
+  <button class="tbtn" id="btn-new">＋ New Tree</button>
+  <button class="tbtn" id="btn-export">⬆ Export LaTeX</button>
+  <div class="spacer"></div>
+  <button class="tbtn" id="btn-clear" style="opacity:.65">✕ Clear All</button>
+</div>
+
+<!-- ── WORKSPACE ── -->
+<div id="workspace"></div>
+
+<!-- ── CONCLUSION MODAL ── -->
+<div class="modal-bg" id="concl-modal">
+  <div class="modal-box">
+    <h3>Edit Conclusion</h3>
+    <div class="modal-label">LaTeX</div>
+    <input class="modal-input" id="concl-input" type="text" autocomplete="off" spellcheck="false"
+           placeholder="e.g. \langle S,\sigma\rangle \to \sigma'" />
+    <div class="modal-hint"><kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel</div>
+    <div class="modal-preview" id="concl-preview"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="concl-cancel">Cancel</button>
+      <button class="btn-primary"   id="concl-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── RULE MODAL ── -->
+<div class="modal-bg" id="rule-modal">
+  <div class="modal-box">
+    <h3>Edit Rule</h3>
+    <div class="modal-label">Rule name (LaTeX)</div>
+    <input class="modal-input" id="rule-input" type="text" autocomplete="off" spellcheck="false"
+           placeholder="e.g. \mathrm{Seq}_{NS}" />
+    <div class="modal-hint"><kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel</div>
+    <div class="modal-preview" id="rule-preview"></div>
+
+    <div class="arity-section">
+      <div class="arity-row">
+        <span class="arity-label">Premises:</span>
+        <button class="arity-btn" data-n="0">Axiom (0)</button>
+        <button class="arity-btn" data-n="1">Unary (1)</button>
+        <button class="arity-btn" data-n="2">Binary (2)</button>
+        <button class="arity-btn" data-n="3">Ternary (3)</button>
+        <button class="arity-btn" data-n="null">Free</button>
+        <span class="arity-inferred" id="arity-hint"></span>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" id="rule-cancel">Cancel</button>
+      <button class="btn-primary"   id="rule-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── EXPORT MODAL ── -->
+<div class="modal-bg" id="export-modal">
+  <div class="export-box">
+    <h3>LaTeX Export
+      <span style="font-weight:400;color:#888;font-size:.9em">— requires <code>\usepackage{bussproofs}</code></span>
+    </h3>
+    <textarea class="export-ta" id="export-ta" readonly></textarea>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-secondary" id="export-close">Close</button>
+      <button class="btn-primary"   id="export-copy">Copy to Clipboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── HELP BAR ── -->
+<div id="help-bar">
+  <span><b>Click conclusion</b> → edit LaTeX</span>
+  <span><b>Click rule</b> → edit rule + set arity</span>
+  <span><b>Empty slot</b> → click to fill premise</span>
+  <span><b>Hover node → ×</b> → delete node + children</span>
+  <span style="margin-left:auto">Autosaved to browser</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════
+//  ARITY INFERENCE
+// ═══════════════════════════════════════════
+const ARITY_PATTERNS = [
+  { re: /ass|skip|whf|wff|refl|ax\b/i,          n: 0 },   // axioms
+  { re: /seq|wht|wtt|if_ns|while.*t|comp/i,      n: 2 },   // binary
+  { re: /neg_i|neg_e|not_i|not_e|dni|dne|lem\b/i, n: 1 }, // unary
+];
+
+function inferArity(ruleTex) {
+  if (!ruleTex || !ruleTex.trim()) return null;
+  const plain = ruleTex.replace(/\\[a-zA-Z]+/g, ' ').replace(/[{}$_^]/g, '').toLowerCase();
+  for (const { re, n } of ARITY_PATTERNS) {
+    if (re.test(plain)) return n;
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════
+//  DATA MODEL
+// ═══════════════════════════════════════════
+let _nextId = 0;
+const mkNode = (concl = '', rule = '', maxPrems = null) => ({
+  id: _nextId++,
+  concl,
+  rule,
+  maxPrems,   // null=free | 0=axiom | N=fixed arity
+  prems: []
+});
+
+let trees = [];   // [{ title, root }]
+
+// ═══════════════════════════════════════════
+//  TREE HELPERS
+// ═══════════════════════════════════════════
+function findNode(id, node) {
+  if (node.id === id) return node;
+  for (const p of node.prems) { const f = findNode(id, p); if (f) return f; }
+  return null;
+}
+function removeNode(id, node) {
+  const i = node.prems.findIndex(p => p.id === id);
+  if (i !== -1) { node.prems.splice(i, 1); return true; }
+  return node.prems.some(p => removeNode(id, p));
+}
+
+// ═══════════════════════════════════════════
+//  KATEX
+// ═══════════════════════════════════════════
+function ktx(tex, el) {
+  if (!tex || !tex.trim()) { el.innerHTML = ''; return; }
+  try { katex.render(tex, el, { throwOnError: false, displayMode: false }); }
+  catch (e) { el.textContent = tex; }
+}
+
+// ═══════════════════════════════════════════
+//  BUILD NODE DOM
+// ═══════════════════════════════════════════
+function buildNode(node, treeObj) {
+
+  // ── Outer wrapper: padding-right creates a hover zone for the delete button ──
+  const wrap = document.createElement('div');
+  wrap.className = 'nd-node';
+
+  /* ────────────────────────────────────────
+     TOP SECTION — three modes:
+
+     A) maxPrems === 0  (axiom)
+        → nothing above the bar
+
+     B) maxPrems = N > 0  (fixed arity)
+        → one premises-row with N items:
+            filled slots  → render sub-node
+            empty slots   → render an add-btn (side-by-side)
+
+     C) maxPrems === null  (free)
+        → single "+ premise" button above all premises
+        → then the premises row below it
+  ──────────────────────────────────────── */
+
+  if (node.maxPrems !== 0) {
+    const top = document.createElement('div');
+    top.className = 'nd-top';
+
+    if (node.maxPrems !== null) {
+      // ── B: fixed arity — parallel slots ──
+      const premsRow = document.createElement('div');
+      premsRow.className = 'nd-premises-row';
+
+      for (let i = 0; i < node.maxPrems; i++) {
+        if (i < node.prems.length) {
+          // Filled slot: recurse
+          premsRow.appendChild(buildNode(node.prems[i], treeObj));
+        } else {
+          // Empty slot: add button aligned to the bottom of the row
+          const slot = document.createElement('div');
+          slot.className = 'nd-empty-slot';
+
+          const slotBtn = document.createElement('button');
+          slotBtn.className = 'add-prem-btn';
+          slotBtn.textContent = `+ premise ${i + 1}`;
+          slotBtn.title = `Add premise ${i + 1} of ${node.maxPrems}`;
+          slotBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            node.prems.push(mkNode());
+            save(); render();
+          });
+          slot.appendChild(slotBtn);
+          premsRow.appendChild(slot);
+        }
+      }
+      top.appendChild(premsRow);
+
+    } else {
+      // ── C: free arity — single button + premises row ──
+      const addRow = document.createElement('div');
+      addRow.className = 'nd-free-add-row';
+      const addBtn = document.createElement('button');
+      addBtn.className = 'add-prem-btn';
+      addBtn.textContent = '+ premise';
+      addBtn.title = 'Add a new premise';
+      addBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        node.prems.push(mkNode());
+        save(); render();
+      });
+      addRow.appendChild(addBtn);
+      top.appendChild(addRow);
+
+      if (node.prems.length > 0) {
+        const premsRow = document.createElement('div');
+        premsRow.className = 'nd-premises-row';
+        node.prems.forEach(p => premsRow.appendChild(buildNode(p, treeObj)));
+        top.appendChild(premsRow);
+      }
+    }
+
+    wrap.appendChild(top);
+  }
+  // maxPrems === 0 → no top section (clean axiom)
+
+  /* ── INFERENCE: bar-row + conclusion ── */
+  const inf = document.createElement('div');
+  inf.className = 'nd-inference';
+
+  const barRow = document.createElement('div');
+  barRow.className = 'nd-bar-row';
+
+  const bar = document.createElement('div');
+  bar.className = 'nd-bar';
+  barRow.appendChild(bar);
+
+  // Rule label
+  const ruleWrap = document.createElement('span');
+  ruleWrap.className = 'nd-rule-wrap';
+  ruleWrap.title = 'Click to edit rule and arity';
+  if (node.rule && node.rule.trim()) {
+    ruleWrap.appendChild(document.createTextNode(' ('));
+    const inner = document.createElement('span');
+    ktx(node.rule, inner);
+    ruleWrap.appendChild(inner);
+    ruleWrap.appendChild(document.createTextNode(') '));
+  } else {
+    const ph = document.createElement('span');
+    ph.className = 'nd-rule-ph';
+    ph.textContent = 'rule';
+    ruleWrap.appendChild(ph);
+  }
+  ruleWrap.addEventListener('click', e => { e.stopPropagation(); openRuleModal(node); });
+  barRow.appendChild(ruleWrap);
+  inf.appendChild(barRow);
+
+  // Conclusion
+  const conclWrap = document.createElement('div');
+  conclWrap.className = 'nd-concl-wrap';
+  conclWrap.title = 'Click to edit conclusion';
+  if (node.concl && node.concl.trim()) {
+    ktx(node.concl, conclWrap);
+  } else {
+    const ph = document.createElement('span');
+    ph.className = 'nd-concl-ph';
+    ph.textContent = 'click to edit';
+    conclWrap.appendChild(ph);
+  }
+  conclWrap.addEventListener('click', e => { e.stopPropagation(); openConclModal(node); });
+  inf.appendChild(conclWrap);
+
+  wrap.appendChild(inf);
+
+  /* ── DELETE BUTTON ──
+     Lives inside the node's padding-right zone (right: 2px).
+     Visibility uses a JS grace-period timer: hovering the button
+     after leaving the node keeps it visible long enough to click.
+  */
+  const delBtn = document.createElement('button');
+  delBtn.className = 'nd-node-del';
+  delBtn.textContent = '×';
+  delBtn.title = 'Delete this node and all its premises';
+  // initial state: hidden (toggled by JS below)
+  delBtn.style.display = 'none';
+
+  delBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (treeObj.root.id === node.id) {
+      trees.splice(trees.indexOf(treeObj), 1);
+    } else {
+      removeNode(node.id, treeObj.root);
+    }
+    save(); render();
+  });
+  wrap.appendChild(delBtn);
+
+  // Grace-period hover: mouse can travel from node → button without it vanishing
+  let _hideTimer = null;
+  const showDel = () => { clearTimeout(_hideTimer); delBtn.style.display = 'block'; };
+  const hideDel = () => { _hideTimer = setTimeout(() => { delBtn.style.display = 'none'; }, 180); };
+
+  wrap.addEventListener('mouseenter', showDel);
+  wrap.addEventListener('mouseleave', hideDel);
+  delBtn.addEventListener('mouseenter', showDel);
+  delBtn.addEventListener('mouseleave', hideDel);
+
+  return wrap;
+}
+
+// ═══════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════
+function render() {
+  const ws = document.getElementById('workspace');
+  ws.innerHTML = '';
+
+  if (trees.length === 0) {
+    ws.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:16px;
+                  margin-top:80px;color:#bbb;font-family:sans-serif;font-size:.9em;text-align:center;">
+        <div style="font-size:3em;opacity:.25;line-height:1">⊢</div>
+        <div>No proof trees yet.</div>
+        <button class="tbtn" onclick="addNewTree()"
+          style="background:#2563eb;border-color:#2563eb;color:#fff;padding:6px 20px;font-size:.82em;">
+          ＋ New Tree
+        </button>
+      </div>`;
+    return;
+  }
+
+  trees.forEach(treeObj => {
+    const card = document.createElement('div');
+    card.className = 'tree-card';
+
+    const header = document.createElement('div');
+    header.className = 'tree-card-header';
+
+    const titleInp = document.createElement('input');
+    titleInp.className = 'tree-title-input';
+    titleInp.type = 'text';
+    titleInp.placeholder = 'Proof title…';
+    titleInp.value = treeObj.title || '';
+    titleInp.addEventListener('input', () => { treeObj.title = titleInp.value; save(); });
+    header.appendChild(titleInp);
+
+    const delTree = document.createElement('button');
+    delTree.className = 'tree-del-btn';
+    delTree.textContent = '✕ Delete tree';
+    delTree.addEventListener('click', () => {
+      trees.splice(trees.indexOf(treeObj), 1);
+      save(); render();
+    });
+    header.appendChild(delTree);
+    card.appendChild(header);
+
+    card.appendChild(buildNode(treeObj.root, treeObj));
+    ws.appendChild(card);
+  });
+}
+
+function addNewTree() {
+  trees.push({ title: `Proof ${trees.length + 1}`, root: mkNode() });
+  save(); render();
+}
+
+// ═══════════════════════════════════════════
+//  CONCLUSION MODAL
+// ═══════════════════════════════════════════
+let _conclCb = null;
+
+function openConclModal(node) {
+  _conclCb = val => { node.concl = val; save(); render(); };
+  document.getElementById('concl-input').value = node.concl || '';
+  refreshConclPreview();
+  document.getElementById('concl-modal').classList.add('open');
+  setTimeout(() => { const i = document.getElementById('concl-input'); i.focus(); i.select(); }, 40);
+}
+function closeConclModal() { document.getElementById('concl-modal').classList.remove('open'); _conclCb = null; }
+function commitConclModal() { if (_conclCb) _conclCb(document.getElementById('concl-input').value); closeConclModal(); }
+function refreshConclPreview() {
+  const v = document.getElementById('concl-input').value;
+  const p = document.getElementById('concl-preview');
+  p.innerHTML = '';
+  if (v.trim()) ktx(v, p);
+  else p.innerHTML = '<span style="color:#c8d4e0;font-family:sans-serif;font-size:.78em">(empty)</span>';
+}
+
+document.getElementById('concl-input').addEventListener('input', refreshConclPreview);
+document.getElementById('concl-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') commitConclModal();
+  if (e.key === 'Escape') closeConclModal();
+});
+document.getElementById('concl-save').addEventListener('click', commitConclModal);
+document.getElementById('concl-cancel').addEventListener('click', closeConclModal);
+document.getElementById('concl-modal').addEventListener('click', e => {
+  if (e.target.id === 'concl-modal') closeConclModal();
+});
+
+// ═══════════════════════════════════════════
+//  RULE MODAL  (name + arity picker)
+// ═══════════════════════════════════════════
+let _ruleNode = null;
+let _selectedArity = null;
+
+function openRuleModal(node) {
+  _ruleNode = node;
+  _selectedArity = node.maxPrems;
+  document.getElementById('rule-input').value = node.rule || '';
+  refreshRulePreview();
+  updateArityHint(node.rule || '');
+  syncArityBtns(_selectedArity);
+  document.getElementById('rule-modal').classList.add('open');
+  setTimeout(() => { const i = document.getElementById('rule-input'); i.focus(); i.select(); }, 40);
+}
+function closeRuleModal() { document.getElementById('rule-modal').classList.remove('open'); _ruleNode = null; }
+function commitRuleModal() {
+  if (!_ruleNode) return;
+  _ruleNode.rule     = document.getElementById('rule-input').value;
+  _ruleNode.maxPrems = _selectedArity;
+  // Trim excess premises if arity shrank
+  if (_ruleNode.maxPrems !== null && _ruleNode.prems.length > _ruleNode.maxPrems) {
+    _ruleNode.prems.splice(_ruleNode.maxPrems);
+  }
+  save(); render();
+  closeRuleModal();
+}
+function refreshRulePreview() {
+  const v = document.getElementById('rule-input').value;
+  const p = document.getElementById('rule-preview');
+  p.innerHTML = '';
+  if (v.trim()) {
+    const w = document.createElement('span');
+    w.appendChild(document.createTextNode('('));
+    const inner = document.createElement('span');
+    ktx(v, inner);
+    w.appendChild(inner);
+    w.appendChild(document.createTextNode(')'));
+    p.appendChild(w);
+  } else {
+    p.innerHTML = '<span style="color:#c8d4e0;font-family:sans-serif;font-size:.78em">(empty)</span>';
+  }
+}
+function syncArityBtns(selected) {
+  document.querySelectorAll('.arity-btn').forEach(btn => {
+    const n = btn.dataset.n === 'null' ? null : parseInt(btn.dataset.n, 10);
+    btn.classList.toggle('active', n === selected);
+  });
+}
+function updateArityHint(ruleTex) {
+  const inferred = inferArity(ruleTex);
+  const el = document.getElementById('arity-hint');
+  if (inferred !== null) {
+    const labels = { 0: 'axiom (0)', 1: 'unary (1)', 2: 'binary (2)', 3: 'ternary (3)' };
+    el.textContent = `← auto-detected: ${labels[inferred] ?? inferred}`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+document.querySelectorAll('.arity-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _selectedArity = btn.dataset.n === 'null' ? null : parseInt(btn.dataset.n, 10);
+    syncArityBtns(_selectedArity);
+  });
+});
+
+document.getElementById('rule-input').addEventListener('input', function () {
+  refreshRulePreview();
+  const inferred = inferArity(this.value);
+  updateArityHint(this.value);
+  // Auto-select only when the node hasn't been manually configured yet
+  if (inferred !== null && _ruleNode && _ruleNode.maxPrems === null) {
+    _selectedArity = inferred;
+    syncArityBtns(_selectedArity);
+  }
+});
+document.getElementById('rule-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') commitRuleModal();
+  if (e.key === 'Escape') closeRuleModal();
+});
+document.getElementById('rule-save').addEventListener('click', commitRuleModal);
+document.getElementById('rule-cancel').addEventListener('click', closeRuleModal);
+document.getElementById('rule-modal').addEventListener('click', e => {
+  if (e.target.id === 'rule-modal') closeRuleModal();
+});
+
+// ═══════════════════════════════════════════
+//  EXPORT (bussproofs)
+// ═══════════════════════════════════════════
+function exportNode(node, ind) {
+  if (node.prems.length === 0) {
+    return `${ind}\\AxiomC{$${node.concl || '\\phantom{A}'}$}\n`;
+  }
+  let s = '';
+  node.prems.forEach(p => { s += exportNode(p, ind); });
+  if (node.rule && node.rule.trim()) {
+    s += `${ind}\\RightLabel{$\\scriptsize(${node.rule})$}\n`;
+  }
+  const cmds = ['\\UnaryInfC','\\BinaryInfC','\\TrinaryInfC','\\QuaternaryInfC'];
+  const cmd  = cmds[Math.min(node.prems.length - 1, cmds.length - 1)];
+  s += `${ind}${cmd}{$${node.concl || '\\phantom{A}'}$}\n`;
+  return s;
+}
+
+function showExport() {
+  let out = '% ── Natural Deduction Proof ────────────────────\n';
+  out    += '% Requires \\usepackage{bussproofs} in your preamble.\n';
+  trees.forEach((t, i) => {
+    out += `\n% ${t.title || 'Tree ' + (i+1)}\n\\begin{prooftree}\n`;
+    out += exportNode(t.root, '  ');
+    out += '\\end{prooftree}\n';
+  });
+  document.getElementById('export-ta').value = out;
+  document.getElementById('export-modal').classList.add('open');
+}
+
+document.getElementById('export-close').addEventListener('click', () =>
+  document.getElementById('export-modal').classList.remove('open'));
+document.getElementById('export-modal').addEventListener('click', e => {
+  if (e.target.id === 'export-modal') document.getElementById('export-modal').classList.remove('open');
+});
+document.getElementById('export-copy').addEventListener('click', function () {
+  const ta = document.getElementById('export-ta');
+  ta.select();
+  navigator.clipboard.writeText(ta.value).catch(() => document.execCommand('copy'));
+  this.textContent = '✓ Copied!';
+  setTimeout(() => { this.textContent = 'Copy to Clipboard'; }, 2000);
+});
+
+// ═══════════════════════════════════════════
+//  PERSISTENCE
+// ═══════════════════════════════════════════
+function save() {
+  try {
+    localStorage.setItem('nd_trees_v3', JSON.stringify(trees));
+    localStorage.setItem('nd_id_v3', String(_nextId));
+  } catch (e) {}
+}
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem('nd_trees_v3');
+    if (!raw) return false;
+    trees   = JSON.parse(raw);
+    _nextId = parseInt(localStorage.getItem('nd_id_v3') || '0', 10) || 0;
+    return true;
+  } catch (e) { return false; }
+}
+
+// ═══════════════════════════════════════════
+//  TOOLBAR
+// ═══════════════════════════════════════════
+document.getElementById('btn-new').addEventListener('click', addNewTree);
+document.getElementById('btn-export').addEventListener('click', showExport);
+document.getElementById('btn-clear').addEventListener('click', () => {
+  if (!trees.length) return;
+  if (confirm('Clear all proof trees? This cannot be undone.')) {
+    trees = []; _nextId = 0; save(); render();
+  }
+});
+
+// ═══════════════════════════════════════════
+//  EXAMPLE PROOF (first load)
+// ═══════════════════════════════════════════
+function buildExample() {
+  const ass1 = mkNode(
+    '\\langle \\mathbf{a := a{+}n},\\;[0,1,2]\\rangle \\to [2,1,2]',
+    '\\mathrm{Ass}_{NS}', 0
+  );
+  const ass2 = mkNode(
+    '\\langle \\mathbf{b := b{*}n},\\;[2,1,2]\\rangle \\to [2,2,2]',
+    '\\mathrm{Ass}_{NS}', 0
+  );
+  const seq = mkNode(
+    '\\langle \\mathbf{a := a{+}n}\\,;\\,\\mathbf{b := b{*}n},\\;[0,1,2]\\rangle \\to [2,2,2]',
+    '\\mathrm{Seq}_{NS}', 2
+  );
+  seq.prems = [ass1, ass2];
+  trees.push({ title: 'Example — Seq_NS', root: seq });
+  save();
+}
+
+if (!loadSaved()) buildExample();
+render();
+</script>
+</body>
+</html>
